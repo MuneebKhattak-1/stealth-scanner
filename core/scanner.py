@@ -36,12 +36,13 @@ SERVICE_MAP = {
 
 class ScanResult:
     """Holds the result of a single port scan."""
-    def __init__(self, host: str, port: int, state: str, service: str = "", banner: str = ""):
+    def __init__(self, host: str, port: int, state: str, service: str = "", banner: str = "", os_guess: str = ""):
         self.host = host
         self.port = port
         self.state = state      # open / closed / filtered
         self.service = service
         self.banner = banner
+        self.os_guess = os_guess  # OS fingerprint from packet
 
     def to_dict(self) -> dict:
         return {
@@ -50,13 +51,15 @@ class ScanResult:
             "state": self.state,
             "service": self.service,
             "banner": self.banner,
+            "os_guess": self.os_guess,
         }
 
     def __repr__(self):
         color = Fore.GREEN if self.state == "open" else (Fore.YELLOW if self.state == "filtered" else Fore.RED)
         svc = f"  [{self.service}]" if self.service else ""
-        banner = f"  \"{self.banner[:60]}\"" if self.banner else ""
-        return f"{color}{self.host:<18}{str(self.port):<8}{self.state:<12}{svc}{banner}{Style.RESET_ALL}"
+        banner = f"  \"{self.banner[:40]}\"" if self.banner else ""
+        os_str = f"  OS:{self.os_guess}" if self.os_guess else ""
+        return f"{color}{self.host:<18}{str(self.port):<8}{self.state:<12}{svc}{banner}{Fore.CYAN}{os_str}{Style.RESET_ALL}"
 
 
 class CoreScanner:
@@ -162,7 +165,8 @@ class CoreScanner:
 
     def _syn_scan(self, host: str, port: int) -> Optional[ScanResult]:
         try:
-            from scapy.all import IP, TCP, sr1, conf
+            from scapy.all import IP, TCP, sr1, conf, send
+            from core.fingerprint import Fingerprinter
             conf.verb = 0  # silence scapy output
 
             pkt = IP(dst=host) / TCP(dport=port, flags="S",
@@ -175,11 +179,13 @@ class CoreScanner:
             if resp.haslayer(TCP):
                 flags = resp[TCP].flags
                 if flags == 0x12:  # SYN-ACK → open
+                    # Extract OS info from the response packet
+                    fp = Fingerprinter.fingerprint_from_packet(resp)
+                    os_guess = fp.get("os", "")
                     # Send RST to close gracefully (stealth)
-                    from scapy.all import send
                     send(IP(dst=host) / TCP(dport=port, flags="R"), verbose=0)
                     service = SERVICE_MAP.get(port, "unknown")
-                    return ScanResult(host, port, "open", service)
+                    return ScanResult(host, port, "open", service, os_guess=os_guess)
                 elif flags == 0x14:  # RST-ACK → closed
                     return None  # Skip closed ports silently
         except ImportError:
@@ -230,12 +236,29 @@ class CoreScanner:
     # ------------------------------------------------------------------ #
 
     def print_results(self):
-        """Pretty-print open/filtered ports."""
+        """Pretty-print open/filtered ports with OS info."""
         open_ports = [r for r in self.results if r.state in ("open", "open|filtered")]
         if not open_ports:
             print(f"{Fore.YELLOW}[!] No open ports found.{Style.RESET_ALL}")
             return
-        print(f"\n{Fore.GREEN}{'HOST':<18}{'PORT':<8}{'STATE':<12}SERVICE / BANNER{Style.RESET_ALL}")
-        print("─" * 70)
+
+        # Deduce best OS guess per host from all responses
+        host_os: dict = {}
         for r in open_ports:
-            print(r)
+            if r.os_guess and r.os_guess != "Unknown":
+                host_os[r.host] = r.os_guess
+
+        # Print OS summary per host
+        if host_os:
+            print(f"\n{Fore.CYAN}{'HOST':<18} OS FINGERPRINT{Style.RESET_ALL}")
+            print("─" * 50)
+            for host, os_name in host_os.items():
+                print(f"{Fore.CYAN}{host:<18} {Fore.GREEN}{os_name}{Style.RESET_ALL}")
+
+        print(f"\n{Fore.GREEN}{'HOST':<18}{'PORT':<8}{'STATE':<12}{'SERVICE':<16}BANNER{Style.RESET_ALL}")
+        print("─" * 80)
+        for r in open_ports:
+            color = Fore.GREEN if r.state == "open" else Fore.YELLOW
+            svc = f"[{r.service}]" if r.service else ""
+            banner = f'"{r.banner[:40]}"' if r.banner else ""
+            print(f"{color}{r.host:<18}{str(r.port):<8}{r.state:<12}{svc:<16}{banner}{Style.RESET_ALL}")
