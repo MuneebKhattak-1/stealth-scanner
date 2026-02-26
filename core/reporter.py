@@ -41,24 +41,34 @@ class Reporter:
     # ------------------------------------------------------------------ #
 
     def to_txt(self, output_path: str):
+        os_info = self.meta.get("os_info", {})
         lines = [
-            "=" * 60,
+            "=" * 70,
             "  STEALTHSCAN REPORT",
             f"  Generated: {self.timestamp}",
-            "=" * 60,
+            "=" * 70,
             f"  Targets  : {', '.join(self.meta.get('targets', []))}",
             f"  Scan Type: {self.meta.get('scan_type', 'N/A')}",
             f"  Duration : {self.meta.get('duration', 'N/A')}",
-            "=" * 60,
-            f"{'HOST':<18}{'PORT':<8}{'STATE':<12}SERVICE",
-            "-" * 60,
+        ]
+        # OS summary
+        if os_info:
+            lines.append("  OS Detected:")
+            for host, info in os_info.items():
+                os_name = info.get('os', '?') if isinstance(info, dict) else str(info)
+                lines.append(f"    {host} → {os_name}")
+        lines += [
+            "=" * 70,
+            f"{'HOST':<18}{'PORT':<8}{'STATE':<12}{'OS':<20}SERVICE",
+            "-" * 70,
         ]
         for r in self.results:
             if r.state in ("open", "open|filtered"):
-                lines.append(f"{r.host:<18}{r.port:<8}{r.state:<12}{r.service}")
+                os_name = os_info.get(r.host, {}).get('os', '') if isinstance(os_info.get(r.host), dict) else ''
+                lines.append(f"{r.host:<18}{r.port:<8}{r.state:<12}{os_name:<20}{r.service}")
                 if r.banner:
                     lines.append(f"  Banner: {r.banner[:80]}")
-        lines.append("=" * 60)
+        lines.append("=" * 70)
 
         with open(output_path, "w") as f:
             f.write("\n".join(lines))
@@ -70,28 +80,57 @@ class Reporter:
 
     def to_html(self, output_path: str):
         open_results = [r for r in self.results if r.state in ("open", "open|filtered")]
+        os_info = self.meta.get("os_info", {})
 
+        def get_os(host):
+            """Safely get OS name for a host from os_info."""
+            info = os_info.get(host)
+            if isinstance(info, dict):
+                return info.get('os', '—')
+            return str(info) if info else '—'
+
+        # Build port table rows WITH OS column
         rows = ""
         for r in open_results:
             state_cls = "open" if r.state == "open" else "filtered"
+            os_name = get_os(r.host)
+            os_cls = ""
+            if "Windows" in os_name:
+                os_cls = "os-windows"
+            elif "Linux" in os_name:
+                os_cls = "os-linux"
+            elif "macOS" in os_name or "BSD" in os_name:
+                os_cls = "os-mac"
             rows += (
                 f"<tr>"
                 f"<td>{r.host}</td>"
                 f"<td>{r.port}</td>"
                 f"<td class='state {state_cls}'>{r.state}</td>"
+                f"<td class='os-tag {os_cls}'>{os_name}</td>"
                 f"<td>{r.service}</td>"
                 f"<td class='banner'>{r.banner[:80] if r.banner else '—'}</td>"
                 f"</tr>\n"
             )
 
-        os_info = self.meta.get("os_info", {})
+        # Build OS summary rows
         os_rows = ""
         for host, info in os_info.items():
+            if isinstance(info, dict):
+                os_name = info.get('os', '?')
+                ttl     = info.get('ttl', '—')
+                window  = info.get('window', '—')
+                method  = info.get('method', 'packet')
+                ports   = ', '.join(str(p) for p in info.get('ports', [])) or '—'
+            else:
+                os_name = str(info)
+                ttl = window = method = ports = '—'
             os_rows += (
                 f"<tr><td>{host}</td>"
-                f"<td>{info.get('os','?')}</td>"
-                f"<td>{info.get('ttl','?')}</td>"
-                f"<td>{info.get('window','?')}</td></tr>\n"
+                f"<td class='os-tag'><strong>{os_name}</strong></td>"
+                f"<td>{method}</td>"
+                f"<td>{ttl}</td>"
+                f"<td>{window}</td>"
+                f"<td>{ports}</td></tr>\n"
             )
 
         html = f"""<!DOCTYPE html>
@@ -134,8 +173,12 @@ class Reporter:
     tr:hover {{ background: #1c2128; }}
     .state.open     {{ color: #3fb950; font-weight: bold; }}
     .state.filtered {{ color: #d29922; font-weight: bold; }}
-    .banner {{ color: #8b949e; font-size: 0.78rem; max-width: 400px;
+    .banner {{ color: #8b949e; font-size: 0.78rem; max-width: 300px;
                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    .os-tag         {{ font-weight: bold; color: #e6edf3; }}
+    .os-windows     {{ color: #58a6ff; }}
+    .os-linux       {{ color: #3fb950; }}
+    .os-mac         {{ color: #f0883e; }}
     .badge {{
       display: inline-block;
       background: #1f6feb;
@@ -174,12 +217,12 @@ class Reporter:
   <h2>Open Ports</h2>
   <table>
     <thead>
-      <tr><th>Host</th><th>Port</th><th>State</th><th>Service</th><th>Banner</th></tr>
+      <tr><th>Host</th><th>Port</th><th>State</th><th>OS</th><th>Service</th><th>Banner</th></tr>
     </thead>
-    <tbody>{rows if rows else '<tr><td colspan="5" style="text-align:center;color:#8b949e">No open ports found</td></tr>'}</tbody>
+    <tbody>{rows if rows else '<tr><td colspan="6" style="text-align:center;color:#8b949e">No open ports found</td></tr>'}</tbody>
   </table>
 
-  {'<h2>OS Fingerprints</h2><table><thead><tr><th>Host</th><th>OS Guess</th><th>TTL</th><th>Window</th></tr></thead><tbody>' + os_rows + '</tbody></table>' if os_rows else ''}
+  {'<h2>OS Fingerprints</h2><table><thead><tr><th>Host</th><th>OS</th><th>Method</th><th>TTL</th><th>Window</th><th>Ports Used</th></tr></thead><tbody>' + os_rows + '</tbody></table>' if os_rows else ''}
 
   <footer>StealthScan | For authorized use only</footer>
 </body>
