@@ -242,11 +242,23 @@ class CoreScanner:
             print(f"{Fore.YELLOW}[!] No open ports found.{Style.RESET_ALL}")
             return
 
-        # Deduce best OS guess per host from all responses
+        # Build per-host open port sets for port-based OS detection
+        from core.fingerprint import Fingerprinter
+        host_port_sets: dict = {}
+        for r in open_ports:
+            host_port_sets.setdefault(r.host, set()).add(r.port)
+
+        # Determine OS per host: port-based (most accurate) > packet TTL guess
         host_os: dict = {}
         for r in open_ports:
-            if r.os_guess and r.os_guess != "Unknown":
+            if r.host not in host_os and r.os_guess and r.os_guess != "Unknown":
                 host_os[r.host] = r.os_guess
+
+        # Override with port-based detection (most reliable)
+        for host, ports in host_port_sets.items():
+            port_os = Fingerprinter.port_os_guess(ports)
+            if port_os:
+                host_os[host] = port_os
 
         # Print OS summary per host
         if host_os:
@@ -262,3 +274,4 @@ class CoreScanner:
             svc = f"[{r.service}]" if r.service else ""
             banner = f'"{r.banner[:40]}"' if r.banner else ""
             print(f"{color}{r.host:<18}{str(r.port):<8}{r.state:<12}{svc:<16}{banner}{Style.RESET_ALL}")
+

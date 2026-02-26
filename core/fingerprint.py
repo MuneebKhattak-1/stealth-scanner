@@ -27,6 +27,25 @@ WINDOW_OS_HINTS = {
     4096:  "Solaris",
 }
 
+# Port-based OS signatures (most reliable method)
+PORT_OS_MAP = {
+    # Windows-specific ports
+    frozenset({135}):          "Windows",
+    frozenset({139}):          "Windows",
+    frozenset({445}):          "Windows",
+    frozenset({3389}):         "Windows (RDP)",
+    frozenset({5985}):         "Windows (WinRM)",
+    frozenset({135, 139}):     "Windows",
+    frozenset({135, 445}):     "Windows",
+    frozenset({135, 139, 445}): "Windows",
+    # Linux-specific ports
+    frozenset({22, 111}):      "Linux",
+    frozenset({2049}):         "Linux (NFS)",
+    # macOS specific
+    frozenset({548}):          "macOS (AFP)",
+    frozenset({5900, 22}):     "macOS/Linux",
+}
+
 # Banner regex patterns for service identification
 BANNER_PATTERNS = [
     (r"SSH-(\S+)",                    "SSH",        lambda m: m.group(0)),
@@ -67,13 +86,25 @@ class Fingerprinter:
     @staticmethod
     def window_os_guess(window: int) -> str:
         """Guess OS from TCP window size."""
-        return WINDOW_OS_HINTS.get(window, f"Unknown (window={window})")
+        return WINDOW_OS_HINTS.get(window, "")
+
+    @staticmethod
+    def port_os_guess(open_ports: set) -> str:
+        """
+        Guess OS from set of open ports — most reliable method.
+        Returns OS string if confident match found, else empty string.
+        """
+        for port_set, os_name in PORT_OS_MAP.items():
+            if port_set.issubset(open_ports):
+                return os_name
+        return ""
 
     @staticmethod
     def fingerprint_from_packet(pkt) -> Dict[str, str]:
         """
         Attempt OS fingerprinting from a scapy response packet.
         Returns dict with 'os', 'ttl', 'window', 'flags'.
+        Uses TTL as primary signal; window size only as tiebreaker.
         """
         result = {"os": "Unknown", "ttl": "?", "window": "?", "flags": "?"}
         try:
@@ -86,10 +117,9 @@ class Fingerprinter:
                 win = pkt[TCP].window
                 result["window"] = str(win)
                 os_win = Fingerprinter.window_os_guess(win)
-                if result["os"] == "Unknown":
-                    result["os"] = os_win
-                else:
-                    result["os"] += f" / {os_win}"
+                # Only use window hint if it agrees with TTL guess or TTL is unknown
+                if os_win and (result["os"] == "Unknown" or os_win in result["os"]):
+                    result["os"] = os_win if result["os"] == "Unknown" else result["os"]
                 result["flags"] = str(pkt[TCP].flags)
         except Exception:
             pass
