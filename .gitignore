@@ -12,10 +12,11 @@ build/
 venv/
 env/
 
-# Scan outputs
+# Scan outputs (specific names, not all .txt)
 *.json
 *.html
-*.txt
+scan_output*.txt
+report*.txt
 
 # IDE
 .vscode/
