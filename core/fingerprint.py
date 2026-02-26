@@ -9,11 +9,11 @@ from typing import Dict, Optional, Tuple
 from colorama import Fore, Style
 
 
-# TTL → OS mapping (approximate)
+# TTL → OS mapping: (exact_default_ttl, os_name)
 TTL_OS_MAP = [
-    (255, "Cisco IOS / BSD / Unix"),
     (128, "Windows"),
     (64,  "Linux / Android"),
+    (255, "BSD / macOS / Cisco"),
     (60,  "Older Linux"),
     (32,  "Windows 95/98 (legacy)"),
 ]
@@ -54,11 +54,15 @@ class Fingerprinter:
 
     @staticmethod
     def ttl_os_guess(ttl: int) -> str:
-        """Guess OS from TTL value received in a response packet."""
-        for threshold, os_name in TTL_OS_MAP:
-            if ttl <= threshold:
-                return os_name
-        return "Unknown"
+        """Guess OS from TTL value — finds closest default TTL match."""
+        best_match = "Unknown"
+        best_diff = 999
+        for default_ttl, os_name in TTL_OS_MAP:
+            diff = abs(default_ttl - ttl)
+            if diff < best_diff:
+                best_diff = diff
+                best_match = os_name
+        return best_match
 
     @staticmethod
     def window_os_guess(window: int) -> str:
