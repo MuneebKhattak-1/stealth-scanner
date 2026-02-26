@@ -4,9 +4,11 @@ Uses TTL, TCP window size, and banner analysis to guess OS and service versions.
 """
 
 import re
+import random
 import socket
 from typing import Dict, Optional, Tuple
 from colorama import Fore, Style
+
 
 
 # TTL → OS mapping: (exact_default_ttl, os_name)
@@ -144,22 +146,26 @@ class Fingerprinter:
 
     @staticmethod
     def active_os_probe(target: str, timeout: float = 2.0) -> Dict[str, str]:
+        """Probe port 80 for OS fingerprinting (legacy fallback)."""
+        return Fingerprinter.active_os_probe_port(target, 80, timeout)
+
+    @staticmethod
+    def active_os_probe_port(target: str, port: int = 80, timeout: float = 2.0) -> Dict[str, str]:
         """
-        Try to fingerprint the target OS by sending a crafted packet
-        and analysing the response (TTL + window size).
+        Fingerprint OS by probing a SPECIFIC port (use a known-open port
+        for best results, e.g. 135 for Windows, 22 for Linux).
         Requires scapy + root.
         """
         result = {"os": "Unknown", "ttl": "?", "window": "?"}
         try:
-            from scapy.all import IP, TCP, sr1, conf
+            from scapy.all import IP, TCP, sr1, conf, send
             conf.verb = 0
-            pkt = IP(dst=target) / TCP(dport=80, flags="S")
+            pkt = IP(dst=target) / TCP(dport=port, flags="S",
+                                       seq=random.randint(1000, 9000000))
             resp = sr1(pkt, timeout=timeout, verbose=0)
             if resp:
                 result = Fingerprinter.fingerprint_from_packet(resp)
-                # Send RST to clean up
-                from scapy.all import send
-                send(IP(dst=target) / TCP(dport=80, flags="R"), verbose=0)
+                send(IP(dst=target) / TCP(dport=port, flags="R"), verbose=0)
         except ImportError:
             result["os"] = "scapy not available"
         except PermissionError:
@@ -174,3 +180,4 @@ class Fingerprinter:
         print(f"  ├─ OS Guess : {Fore.GREEN}{result.get('os', 'Unknown')}{Style.RESET_ALL}")
         print(f"  ├─ TTL     : {result.get('ttl', '?')}")
         print(f"  └─ Window  : {result.get('window', '?')}")
+

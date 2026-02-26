@@ -25,7 +25,7 @@ BANNER = f"""
  ██████╔╝   ██║   ███████╗██║  ██║███████╗██║   ██║  ██║
  ╚═════╝    ╚═╝   ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝  ╚═╝
 {Style.RESET_ALL}
- {Fore.GREEN}StealthScan v1.0  |  Python Network Reconnaissance Tool{Style.RESET_ALL}
+ {Fore.GREEN}StealthScan v1.1  |  Python Network Reconnaissance Tool{Style.RESET_ALL}
  {Fore.RED}[!] For authorized penetration testing ONLY{Style.RESET_ALL}
 """
 
@@ -184,12 +184,36 @@ def main():
     print(f"\n{Fore.CYAN}[*] Scan complete in {duration}{Style.RESET_ALL}")
 
     # ── OS Fingerprinting ────────────────────────────────────────────────
-    os_info = {}
+    # Always compute port-based OS guesses from scan results (no extra flag needed)
+    from core.fingerprint import Fingerprinter
+    open_results = [r for r in results if r.state in ("open", "open|filtered")]
+
+    # Build per-host open port sets
+    host_port_sets: dict = {}
+    for r in open_results:
+        host_port_sets.setdefault(r.host, set()).add(r.port)
+
+    # Build os_info for reporter
+    os_info: dict = {}
+    for host, ports in host_port_sets.items():
+        port_os = Fingerprinter.port_os_guess(ports)
+        if port_os:
+            os_info[host] = {"os": port_os, "method": "port-based", "ports": sorted(ports)}
+
+    # --os-detect: additionally probe open ports with raw SYN for TTL+window data
     if args.os_detect:
-        from core.fingerprint import Fingerprinter
-        print(f"\n{Fore.CYAN}[*] Running OS fingerprinting...{Style.RESET_ALL}")
-        for host in targets[:10]:  # limit to 10 hosts
-            info = Fingerprinter.active_os_probe(host, timeout=args.timeout)
+        print(f"\n{Fore.CYAN}[*] Running deep OS fingerprinting on discovered ports...{Style.RESET_ALL}")
+        for host in list(host_port_sets.keys())[:10]:  # limit to 10 hosts
+            probe_ports = sorted(host_port_sets[host])[:3]  # use up to 3 known open ports
+            info = {"os": "Unknown", "ttl": "?", "window": "?"}
+            for port in probe_ports:
+                result = Fingerprinter.active_os_probe_port(host, port, timeout=args.timeout)
+                if result.get("ttl") != "?":
+                    info = result
+                    break
+            # Port-based OS always wins if available
+            if host in os_info:
+                info["os"] = os_info[host]["os"]
             os_info[host] = info
             Fingerprinter.print_os_result(info, host)
 
