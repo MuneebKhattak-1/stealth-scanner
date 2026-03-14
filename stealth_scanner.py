@@ -79,7 +79,9 @@ def build_parser():
     p.add_argument("-t", "--target",
                    help="Target IP, hostname, or CIDR (e.g. 192.168.1.0/24)")
     p.add_argument("-a", "--auto", action="store_true",
-                   help="Auto-Discovery: Scan local network for active devices via ARP")
+                   help="Auto-Discovery: Scan local network for active devices and port scan them")
+    p.add_argument("-d", "--discover", action="store_true",
+                   help="Discover-Only: Find devices on local network and exit (No port scan)")
     # Ports
     p.add_argument("-p", "--ports", default="top100",
                    help="Ports: '80', '1-1024', '22,80,443', 'top100', 'all'\n(default: top100)")
@@ -145,21 +147,22 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    if not args.target and not args.auto:
-        parser.error("You must specify either a target (-t) or enable auto-discovery (-a)")
+    if not args.target and not args.auto and not args.discover:
+        parser.error("You must specify either a target (-t), enable auto-discovery (-a), or discover-only (-d)")
 
     from core.scanner import CoreScanner
 
     # ── Resolve targets & ports ──────────────────────────────────────────
     targets = []
     
-    if args.auto:
+    if args.auto or args.discover:
         subnet = get_local_subnet()
         if not subnet:
             print(f"{Fore.RED}[!] Could not detect local subnet automatically. Please use -t.{Style.RESET_ALL}")
             return 1
             
-        print(f"{Fore.YELLOW}[*] Auto-Discovery Mode Enabled{Style.RESET_ALL}")
+        mode_name = "Discover-Only" if args.discover else "Auto-Discovery"
+        print(f"{Fore.YELLOW}[*] {mode_name} Mode Enabled{Style.RESET_ALL}")
         print(f"{Fore.CYAN}[*] Local Subnet Detected: {subnet}{Style.RESET_ALL}")
         
         # Run ARP scan
@@ -170,6 +173,10 @@ def main():
             print(f"{Fore.YELLOW}[!] No devices found via ARP. Exiting.{Style.RESET_ALL}")
             return 0
             
+        if args.discover:
+            print(f"\n{Fore.GREEN}[*] Discovery complete. Found {len(clients)} devices.{Style.RESET_ALL}\n")
+            return 0
+
         # Use discovered IPs as targets
         targets = [ip for ip, mac in clients]
         print(f"\n{Fore.GREEN}[*] Proceeding to port scan on {len(targets)} discovered devices...{Style.RESET_ALL}\n")

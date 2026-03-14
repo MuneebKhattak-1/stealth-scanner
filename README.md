@@ -103,6 +103,9 @@ python3 stealth_scanner_gui.py
 # Auto-Discovery mode (finds your local subnet and scans active hosts via ARP automatically)
 sudo python3 stealth_scanner.py -a
 
+# Discover-Only (finds your local subnet and lists active hosts, but DOES NOT port scan)
+sudo python3 stealth_scanner.py -d
+
 # Basic scan (targeted, no root)
 python3 stealth_scanner.py -t 192.168.1.1
 
