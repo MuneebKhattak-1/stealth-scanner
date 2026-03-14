@@ -53,6 +53,9 @@ class StealthScanApp(tk.Tk):
         self._build_notebook()
         self._build_status_bar()
 
+        # Initialize profile display (must be after command_bar is built)
+        self._on_profile_change()
+
         # Start polling
         self._poll_queue()
 
@@ -257,8 +260,6 @@ class StealthScanApp(tk.Tk):
         self.profile_desc = tk.Label(row2, text="", font=("Segoe UI", 9),
                                      bg=COLORS["bg_panel"], fg=COLORS["text_dim"], anchor="w")
         self.profile_desc.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        self._on_profile_change()
 
     # ================================================================== #
     #  COMMAND BAR — shows equivalent CLI command                        #
