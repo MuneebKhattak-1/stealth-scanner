@@ -320,23 +320,55 @@ class CoreScanner:
             print(f"{Fore.YELLOW}[!] No open ports found.{Style.RESET_ALL}")
             return
 
-        # Build per-host open port sets for port-based OS detection
+        # Build per-host open port sets and banners
         from core.fingerprint import Fingerprinter
         host_port_sets: dict = {}
+        host_banners: dict = {}
         for r in open_ports:
             host_port_sets.setdefault(r.host, set()).add(r.port)
+            if r.banner:
+                host_banners.setdefault(r.host, []).append(r.banner)
 
-        # Determine OS per host: port-based (most accurate) > packet TTL guess
+        # Determine OS per host using comprehensive logic
         host_os: dict = {}
+        
+        # 1. First, check if packet fingerprinting set an OS guess
         for r in open_ports:
             if r.host not in host_os and r.os_guess and r.os_guess != "Unknown":
                 host_os[r.host] = r.os_guess
 
-        # Override with port-based detection (most reliable)
+        # 2. Run active no-root detection (Ping TTL + SMB + Banners) for any missing or generic
         for host, ports in host_port_sets.items():
-            port_os = Fingerprinter.port_os_guess(ports)
-            if port_os:
-                host_os[host] = port_os
+            current_os = host_os.get(host, "Unknown")
+            banners = host_banners.get(host, [])
+            
+            # Ping TTL
+            ttl = Fingerprinter.ping_ttl_probe(host, timeout=1.0)
+            
+            # SMB Negotiation (highly accurate for Windows)
+            smb_os = None
+            if 445 in ports or 139 in ports:
+                smb_os = Fingerprinter.smb_os_discovery(host, timeout=3.0)
+                
+            if smb_os:
+                host_os[host] = smb_os
+                continue
+                
+            # Comprehensive Guess
+            combined_os = Fingerprinter.comprehensive_os_guess(
+                ttl=ttl,
+                open_ports=ports,
+                banners=banners
+            )
+            
+            # Use specific comprehensive guess over generic port guess or packet guess if better
+            if combined_os and combined_os != "Unknown":
+                if current_os in ("Unknown", "Windows", "Linux"):
+                    host_os[host] = combined_os
+            elif current_os == "Unknown":
+                port_guess = Fingerprinter.port_os_guess(ports)
+                if port_guess:
+                    host_os[host] = port_guess
 
         # Print OS summary per host
         if host_os:
