@@ -279,14 +279,56 @@ class CoreScanner:
 
     @staticmethod
     def get_local_subnet() -> str:
-        """Attempt to detect the local machine's IP and return its /24 subnet."""
+        """Attempt to detect the local machine's best physical IP and return its /24 subnet."""
         try:
+            # 1. Fallback routing test (finds default gateway interface)
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
+            routed_ip = s.getsockname()[0]
             s.close()
-            # Calculate the /24 subnet (assuming standard /24 for local networks as a generic fallback)
-            network = ipaddress.IPv4Interface(f"{local_ip}/24").network
+            
+            # 2. Get all addresses on the machine
+            host_name = socket.gethostname()
+            _, _, ip_addresses = socket.gethostbyname_ex(host_name)
+            
+            # Add the routed IP to the pool if not present
+            if routed_ip not in ip_addresses:
+                ip_addresses.append(routed_ip)
+                
+            # Filter and rank the IPs
+            best_ip = None
+            highest_score = -1
+            
+            for ip in ip_addresses:
+                if ip.startswith("127.") or ip.startswith("169.254."):
+                    continue  # Skip loopback and APIPA
+                    
+                score = 0
+                if ip.startswith("192.168."):
+                    score = 100  # Highest priority to standard home LANs
+                elif ip.startswith("172."):
+                    # Check if in private 172.16.0.0/12 range
+                    second_octet = int(ip.split(".")[1])
+                    if 16 <= second_octet <= 31:
+                        score = 80
+                elif ip.startswith("10."):
+                    score = 50   # 10.x.x.x is often VM NAT or VPN
+                else:
+                    score = 20   # Public or other
+                    
+                # If this IP is the one with internet access, give it a slight boost
+                if ip == routed_ip:
+                    score += 10
+                    
+                if score > highest_score:
+                    highest_score = score
+                    best_ip = ip
+            
+            if not best_ip:
+                best_ip = routed_ip # absolute fallback
+                
+            # Calculate the /24 subnet 
+            network = ipaddress.IPv4Interface(f"{best_ip}/24").network
             return str(network)
         except Exception:
             return ""
