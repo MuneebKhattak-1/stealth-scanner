@@ -9,8 +9,8 @@
 [![Platform](https://img.shields.io/badge/platform-Kali%20Linux-blue?logo=linux)](https://www.kali.org/)
 [![Made With](https://img.shields.io/badge/Made%20with-Scapy-green)](https://scapy.net/)
 
-**A powerful, modular Python network reconnaissance tool for Kali Linux.**  
-SYN stealth scanning · OS fingerprinting · Decoy injection · Packet fragmentation · HTML reports
+**A powerful, modular Python network reconnaissance tool with CLI & GUI.**  
+SYN stealth scanning · OS fingerprinting · Decoy injection · Packet fragmentation · Zenmap-style GUI · HTML reports
 
 </div>
 
@@ -26,6 +26,8 @@ SYN stealth scanning · OS fingerprinting · Decoy injection · Packet fragmenta
 
 | Feature | Detail |
 |---|---|
+| **🖥️ Zenmap-Style GUI** | Dark-themed graphical interface with tabbed results |
+| **CLI + GUI** | Use from terminal or launch the graphical interface |
 | **TCP Connect Scan** | No root required |
 | **SYN Stealth Scan** | Half-open scan via scapy (root required) |
 | **UDP Scan** | Probes UDP ports |
@@ -40,14 +42,61 @@ SYN stealth scanning · OS fingerprinting · Decoy injection · Packet fragmenta
 
 ---
 
-## 🚀 Quick Start (Kali Linux)
+## 🖥️ GUI Mode (Zenmap-Style)
+
+StealthScan includes a full **graphical interface** inspired by Zenmap — no extra dependencies needed (uses Python's built-in `tkinter`).
 
 ```bash
-# Clone & install
+# Launch the GUI
+python3 stealth_scanner_gui.py
+```
+
+### GUI Features
+
+- **🎨 Dark hacker theme** — sleek dark interface with cyan/green accents
+- **📋 Scan profiles** — Quick Scan, Intense, SYN Stealth, Full Stealth, UDP, Full Port Scan
+- **⚡ One-click scanning** — enter target, pick a profile, click Scan
+- **📊 4 tabbed views:**
+  - **Scan Output** — real-time colored log (like Zenmap's Nmap Output tab)
+  - **Ports / Hosts** — sortable table with Host, Port, State, Service, Banner, OS
+  - **Host Details** — per-host OS fingerprint card with open ports summary
+  - **Topology** — visual canvas with host nodes colored by OS
+- **💾 Save reports** — File → Save as HTML / JSON / TXT
+- **🔄 Live progress** — progress bar, timer, and open port counter in status bar
+- **📝 Command bar** — shows equivalent CLI command for each profile
+
+### GUI Scan Profiles
+
+| Profile | Type | Ports | Timing | Stealth |
+|---|---|---|---|---|
+| Quick Scan | TCP Connect | top100 | Normal | Off |
+| Intense Scan | TCP Connect | 1-1024 | Aggressive | Off (+OS) |
+| SYN Stealth Scan | SYN | top100 | Sneaky | On |
+| Full Stealth | SYN | top100 | Paranoid | On (decoys+frag+spoof) |
+| UDP Scan | UDP | top100 | Normal | Off |
+| Full Port Scan | TCP Connect | all 65535 | Aggressive | Off (+OS) |
+
+---
+
+## 🚀 Quick Start
+
+### Install
+
+```bash
 git clone https://github.com/MuneebKhattak-1/stealth-scanner.git
 cd stealth-scanner
 pip3 install -r requirements.txt
+```
 
+### GUI Mode
+
+```bash
+python3 stealth_scanner_gui.py
+```
+
+### CLI Mode
+
+```bash
 # Basic scan (no root)
 python3 stealth_scanner.py -t 192.168.1.1
 
@@ -69,7 +118,7 @@ sudo python3 stealth_scanner.py -t 192.168.1.0/24 -p top100 -o results.json 2>/d
 
 ---
 
-## 🖥️ Example Output
+## 🖥️ Example Output (CLI)
 
 ```
 HOST               OS FINGERPRINT
@@ -98,7 +147,7 @@ HOST              PORT    STATE       SERVICE          BANNER
 
 ---
 
-## ⚙️ All Options
+## ⚙️ CLI Options
 
 | Flag | Description |
 |---|---|
@@ -125,13 +174,19 @@ HOST              PORT    STATE       SERVICE          BANNER
 ```
 stealth-scanner/
 ├── stealth_scanner.py      # CLI entry point
+├── stealth_scanner_gui.py  # GUI entry point (Zenmap-style)
 ├── requirements.txt
 ├── LICENSE
-└── core/
-    ├── scanner.py          # TCP/SYN/UDP engine + auto OS detection
-    ├── stealth.py          # Evasion: decoys, fragmentation, TTL, timing
-    ├── fingerprint.py      # OS + service fingerprinting
-    └── reporter.py         # JSON / HTML / TXT reports
+├── core/
+│   ├── scanner.py          # TCP/SYN/UDP engine + auto OS detection
+│   ├── stealth.py          # Evasion: decoys, fragmentation, TTL, timing
+│   ├── fingerprint.py      # OS + service fingerprinting
+│   └── reporter.py         # JSON / HTML / TXT reports
+└── gui/
+    ├── app.py              # Main GUI window + layout
+    ├── scan_profiles.py    # Pre-defined scan profiles
+    ├── scan_thread.py      # Background scan thread
+    └── results_view.py     # Tabbed result views (Output, Ports, Host, Topology)
 ```
 
 ---
