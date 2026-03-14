@@ -28,6 +28,7 @@ SYN stealth scanning · OS fingerprinting · Decoy injection · Packet fragmenta
 |---|---|
 | **🖥️ Zenmap-Style GUI** | Dark-themed graphical interface with tabbed results |
 | **CLI + GUI** | Use from terminal or launch the graphical interface |
+| **Dural-Mode Scanning**| Specify `-t` for targeted or `-a` for automatic ARP local network discovery |
 | **TCP Connect Scan** | No root required |
 | **SYN Stealth Scan** | Half-open scan via scapy (root required) |
 | **UDP Scan** | Probes UDP ports |
@@ -39,7 +40,7 @@ SYN stealth scanning · OS fingerprinting · Decoy injection · Packet fragmenta
 | **TTL Spoofing** | Mimics Windows/Linux/BSD TTL values |
 | **6 Timing Profiles** | `paranoid` → `insane` (nmap-style) |
 | **Banner Grabbing** | HTTP, SSH, FTP, SMTP, DB service banners |
-| **Reports** | Dark-themed HTML, JSON, plain text |
+| **Outputs** | Beautiful ASCII terminal tables via `tabulate` + HTML/JSON/TXT reports |
 
 ---
 
@@ -98,7 +99,11 @@ python3 stealth_scanner_gui.py
 ### CLI Mode
 
 ```bash
-# Basic scan (no root)
+```bash
+# Auto-Discovery mode (finds your local subnet and scans active hosts via ARP automatically)
+sudo python3 stealth_scanner.py -a
+
+# Basic scan (targeted, no root)
 python3 stealth_scanner.py -t 192.168.1.1
 
 # SYN stealth scan — OS detected automatically
@@ -122,19 +127,35 @@ sudo python3 stealth_scanner.py -t 192.168.1.0/24 -p top100 -o results.json 2>/d
 ## 🖥️ Example Output (CLI)
 
 ```
+[*] Auto-Discovery Mode Enabled
+[*] Local Subnet Detected: 192.168.1.0/24
+[*] Broadcasting ARP on 192.168.1.0/24...
+
+[+] Automatic Discovery Results:
+╒════════════════════╤═══════════════════╕
+│ IP Address         │ MAC Address       │
+╞════════════════════╪═══════════════════╡
+│ 192.168.1.1        │ 00:1A:2B:3C:4D:5E │
+│ 192.168.1.17       │ AA:BB:CC:DD:EE:FF │
+╘════════════════════╧═══════════════════╛
+
+[*] Proceeding to port scan on 2 discovered devices...
+
 [*] Running OS detection...
   192.168.1.17 → Windows 10 / Server 2019 (Build 19045) (via SMB)
 
-HOST              PORT    STATE       SERVICE          BANNER
-────────────────────────────────────────────────────────────────────────────────
-192.168.1.17      135     open        [msrpc]
-192.168.1.17      139     open        [netbios-ssn]
-192.168.1.17      445     open        [smb]
-192.168.1.17      3389    open        [rdp]
+[OS FINGERPRINT]
+HOST          OS GUESS
+------------  --------------------------------------
+192.168.1.17  Windows 10 / Server 2019 (Build 19045)
 
-HOST               OS FINGERPRINT
-──────────────────────────────────────────
-192.168.1.17       Windows 10 / Server 2019 (Build 19045)
+[PORT SCAN RESULTS]
+HOST          PORT  STATE    SERVICE        BANNER
+------------  ----  -------  -------------  ------
+192.168.1.17   135  open     [msrpc]        -
+192.168.1.17   139  open     [netbios-ssn]  -
+192.168.1.17   445  open     [smb]          -
+192.168.1.17  3389  open     [rdp]          -
 
 [*] Scan complete in 4.32s
 ```

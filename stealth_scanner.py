@@ -76,8 +76,10 @@ def build_parser():
         formatter_class=argparse.RawTextHelpFormatter,
     )
     # Target
-    p.add_argument("-t", "--target", required=True,
+    p.add_argument("-t", "--target",
                    help="Target IP, hostname, or CIDR (e.g. 192.168.1.0/24)")
+    p.add_argument("-a", "--auto", action="store_true",
+                   help="Auto-Discovery: Scan local network for active devices via ARP")
     # Ports
     p.add_argument("-p", "--ports", default="top100",
                    help="Ports: '80', '1-1024', '22,80,443', 'top100', 'all'\n(default: top100)")
@@ -123,14 +125,58 @@ def build_parser():
     return p
 
 
+def get_local_subnet() -> str:
+    """Attempt to detect the local machine's IP and return its /24 subnet."""
+    try:
+        # Create a dummy socket to determine the local routing IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        
+        # Calculate the /24 subnet (assuming standard /24 for local networks as a generic fallback)
+        network = ipaddress.IPv4Interface(f"{local_ip}/24").network
+        return str(network)
+    except Exception:
+        return ""
+
 def main():
     print(BANNER)
     parser = build_parser()
     args = parser.parse_args()
 
+    if not args.target and not args.auto:
+        parser.error("You must specify either a target (-t) or enable auto-discovery (-a)")
+
+    from core.scanner import CoreScanner
+
     # ── Resolve targets & ports ──────────────────────────────────────────
-    targets = resolve_targets(args.target)
-    ports   = parse_ports(args.ports)
+    targets = []
+    
+    if args.auto:
+        subnet = get_local_subnet()
+        if not subnet:
+            print(f"{Fore.RED}[!] Could not detect local subnet automatically. Please use -t.{Style.RESET_ALL}")
+            return 1
+            
+        print(f"{Fore.YELLOW}[*] Auto-Discovery Mode Enabled{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}[*] Local Subnet Detected: {subnet}{Style.RESET_ALL}")
+        
+        # Run ARP scan
+        clients = CoreScanner.arp_discovery(subnet, timeout=2.0)
+        CoreScanner.print_discovery_results(clients)
+        
+        if not clients:
+            print(f"{Fore.YELLOW}[!] No devices found via ARP. Exiting.{Style.RESET_ALL}")
+            return 0
+            
+        # Use discovered IPs as targets
+        targets = [ip for ip, mac in clients]
+        print(f"\n{Fore.GREEN}[*] Proceeding to port scan on {len(targets)} discovered devices...{Style.RESET_ALL}\n")
+    else:
+        targets = resolve_targets(args.target)
+
+    ports = parse_ports(args.ports)
 
     print(f"{Fore.CYAN}[*] Targets  : {len(targets)} host(s) | Ports: {len(ports)}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}[*] Scan type: {args.type.upper()}{Style.RESET_ALL}")

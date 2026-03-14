@@ -12,6 +12,12 @@ from typing import List, Dict, Optional, Tuple
 from tqdm import tqdm
 from colorama import Fore, Style, init
 
+try:
+    from tabulate import tabulate
+    HAS_TABULATE = True
+except ImportError:
+    HAS_TABULATE = False
+
 init(autoreset=True)
 
 # Well-known port → service name mapping
@@ -232,6 +238,78 @@ class CoreScanner:
             return ""
 
     # ------------------------------------------------------------------ #
+    #  Auto Discovery (ARP)                                                #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def arp_discovery(network: str, timeout: float = 2.0) -> List[Tuple[str, str]]:
+        """
+        Perform an ARP ping sweep on the given network.
+        Returns a list of (IP, MAC) tuples.
+        Requires root privileges and scapy.
+        """
+        try:
+            from scapy.all import Ether, ARP, srp, conf
+            conf.verb = 0
+            # Create an ARP request packet
+            arp = ARP(pdst=network)
+            ether = Ether(dst="ff:ff:ff:ff:ff:ff")
+            packet = ether/arp
+
+            # Send and receive packets over Layer 2
+            print(f"{Fore.CYAN}[*] Broadcasting ARP on {network}...{Style.RESET_ALL}")
+            result = srp(packet, timeout=timeout, verbose=0)[0]
+
+            clients = []
+            for sent, received in result:
+                clients.append((received.psrc, received.hwsrc))
+            
+            return clients
+        except PermissionError:
+            print(f"{Fore.RED}[!] ARP Discovery requires root privileges (sudo).{Style.RESET_ALL}")
+        except ImportError:
+            print(f"{Fore.RED}[!] ARP Discovery requires 'scapy' module.{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"{Fore.RED}[!] ARP Discovery failed: {e}{Style.RESET_ALL}")
+        return []
+
+    # ------------------------------------------------------------------ #
+    #  Auto Discovery (ARP)                                                #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def arp_discovery(network: str, timeout: float = 2.0) -> List[Tuple[str, str]]:
+        """
+        Perform an ARP ping sweep on the given network.
+        Returns a list of (IP, MAC) tuples.
+        Requires root privileges and scapy.
+        """
+        try:
+            from scapy.all import Ether, ARP, srp, conf
+            conf.verb = 0
+            # Create an ARP request packet
+            arp = ARP(pdst=network)
+            ether = Ether(dst="ff:ff:ff:ff:ff:ff")
+            packet = ether/arp
+
+            # Send and receive packets over Layer 2
+            print(f"{Fore.CYAN}[*] Broadcasting ARP on {network}...{Style.RESET_ALL}")
+            result = srp(packet, timeout=timeout, verbose=0)[0]
+
+            clients = []
+            for sent, received in result:
+                clients.append((received.psrc, received.hwsrc))
+            
+            return clients
+        except PermissionError:
+            print(f"{Fore.RED}[!] ARP Discovery requires root privileges (sudo).{Style.RESET_ALL}")
+        except ImportError:
+            print(f"{Fore.RED}[!] ARP Discovery requires 'scapy' module.{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"{Fore.RED}[!] ARP Discovery failed: {e}{Style.RESET_ALL}")
+        return []
+
+    # ------------------------------------------------------------------ #
     #  Utility                                                             #
     # ------------------------------------------------------------------ #
 
@@ -262,16 +340,53 @@ class CoreScanner:
 
         # Print OS summary per host
         if host_os:
-            print(f"\n{Fore.CYAN}{'HOST':<18} OS FINGERPRINT{Style.RESET_ALL}")
-            print("─" * 50)
-            for host, os_name in host_os.items():
-                print(f"{Fore.CYAN}{host:<18} {Fore.GREEN}{os_name}{Style.RESET_ALL}")
+            if HAS_TABULATE:
+                print(f"\n{Fore.CYAN}[OS FINGERPRINT]{Style.RESET_ALL}")
+                os_data = [[f"{Fore.CYAN}{host}{Style.RESET_ALL}", f"{Fore.GREEN}{os_name}{Style.RESET_ALL}"] for host, os_name in host_os.items()]
+                print(tabulate(os_data, headers=["HOST", "OS GUESS"], tablefmt="plain"))
+            else:
+                print(f"\n{Fore.CYAN}{'HOST':<18} OS FINGERPRINT{Style.RESET_ALL}")
+                print("─" * 50)
+                for host, os_name in host_os.items():
+                    print(f"{Fore.CYAN}{host:<18} {Fore.GREEN}{os_name}{Style.RESET_ALL}")
 
-        print(f"\n{Fore.GREEN}{'HOST':<18}{'PORT':<8}{'STATE':<12}{'SERVICE':<16}BANNER{Style.RESET_ALL}")
-        print("─" * 80)
-        for r in open_ports:
-            color = Fore.GREEN if r.state == "open" else Fore.YELLOW
-            svc = f"[{r.service}]" if r.service else ""
-            banner = f'"{r.banner[:40]}"' if r.banner else ""
-            print(f"{color}{r.host:<18}{str(r.port):<8}{r.state:<12}{svc:<16}{banner}{Style.RESET_ALL}")
+        print(f"\n{Fore.GREEN}[PORT SCAN RESULTS]{Style.RESET_ALL}")
+        
+        if HAS_TABULATE:
+            table_data = []
+            for r in open_ports:
+                color = Fore.GREEN if r.state == "open" else Fore.YELLOW
+                svc = f"[{r.service}]" if r.service else ""
+                banner = f'"{r.banner[:40]}"' if r.banner else "-"
+                table_data.append([
+                    f"{color}{r.host}{Style.RESET_ALL}",
+                    f"{str(r.port)}",
+                    f"{color}{r.state}{Style.RESET_ALL}",
+                    f"{svc}",
+                    f"{banner}"
+                ])
+            print(tabulate(table_data, headers=["HOST", "PORT", "STATE", "SERVICE", "BANNER"], tablefmt="plain"))
+        else:
+            print(f"{Fore.GREEN}{'HOST':<18}{'PORT':<8}{'STATE':<12}{'SERVICE':<16}BANNER{Style.RESET_ALL}")
+            print("─" * 80)
+            for r in open_ports:
+                color = Fore.GREEN if r.state == "open" else Fore.YELLOW
+                svc = f"[{r.service}]" if r.service else ""
+                banner = f'"{r.banner[:40]}"' if r.banner else ""
+                print(f"{color}{r.host:<18}{str(r.port):<8}{r.state:<12}{svc:<16}{banner}{Style.RESET_ALL}")
+
+    @staticmethod
+    def print_discovery_results(clients: List[Tuple[str, str]]):
+        """Pretty-print ARP discovery results using ASCII tables."""
+        if not clients:
+            return
+            
+        print(f"\n{Fore.GREEN}[+] Automatic Discovery Results:{Style.RESET_ALL}")
+        if HAS_TABULATE:
+            print(tabulate(clients, headers=["IP Address", "MAC Address"], tablefmt="fancy_grid"))
+        else:
+            print(f"{'IP Address':<18} {'MAC Address'}")
+            print("─" * 36)
+            for ip, mac in clients:
+                print(f"{ip:<18} {mac}")
 
