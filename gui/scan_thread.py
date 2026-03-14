@@ -204,33 +204,61 @@ class ScanThread(threading.Thread):
                 host_banners.setdefault(r.host, []).append(r.banner)
 
         os_info = {}
+
+        # ── Auto OS detection for all hosts (no root needed) ──────────
+        self.log("")
+        self.log("[*] Running OS detection...", "info")
+
         for host, host_ports in host_port_sets.items():
             banners = host_banners.get(host, [])
-            # Use comprehensive guess combining banners + ports
-            os_name = Fingerprinter.comprehensive_os_guess(
-                open_ports=host_ports, banners=banners
-            )
-            if os_name and os_name != "Unknown":
-                os_info[host] = {"os": os_name, "method": "port+banner", "ports": sorted(host_ports)}
+            info = {"os": "Unknown", "ttl": "?", "window": "?"}
 
-        # Deep OS detect — enhanced with TTL+Window+banner combined analysis
+            # 1. Get TTL via ping (works without root)
+            ttl = Fingerprinter.ping_ttl_probe(host, timeout=profile.get("timeout", 1.0))
+            if ttl > 0:
+                info["ttl"] = str(ttl)
+
+            # 2. Try SMB negotiation for Windows hosts (port 445 open)
+            if 445 in host_ports or 139 in host_ports:
+                smb_os = Fingerprinter.smb_os_discovery(host, timeout=3.0)
+                if smb_os:
+                    info["os"] = smb_os
+                    info["method"] = "SMB"
+                    self.log(f"  {host} → {smb_os} (via SMB)", "os")
+                    os_info[host] = info
+                    continue
+
+            # 3. Comprehensive guess combining everything available
+            combined_os = Fingerprinter.comprehensive_os_guess(
+                ttl=ttl,
+                open_ports=host_ports,
+                banners=banners,
+            )
+            if combined_os and combined_os != "Unknown":
+                info["os"] = combined_os
+            os_info[host] = info
+            self.log(f"  {host} → {info['os']} | TTL: {info['ttl']}", "os")
+
+        # ── Deep OS detect (--os-detect) — additional scapy + window probing ──
         if profile.get("os_detect", False) and host_port_sets:
             self.log("")
             self.log("[*] Running deep OS fingerprinting...", "info")
             for host in list(host_port_sets.keys())[:10]:
                 probe_ports = sorted(host_port_sets[host])[:3]
-                info = {"os": "Unknown", "ttl": "?", "window": "?"}
+                info = os_info.get(host, {"os": "Unknown", "ttl": "?", "window": "?"})
                 for port in probe_ports:
                     result = Fingerprinter.active_os_probe_port(host, port, timeout=profile.get("timeout", 1.0))
                     if result.get("ttl") != "?":
-                        info = result
+                        # Merge new data
+                        info["ttl"] = result.get("ttl", info.get("ttl", "?"))
+                        info["window"] = result.get("window", info.get("window", "?"))
                         break
-                # Now combine with banner data for most specific version
+                # Final combined guess with all available data
                 banners = host_banners.get(host, [])
-                ttl = int(info.get("ttl", -1)) if info.get("ttl", "?") != "?" else -1
-                window = int(info.get("window", -1)) if info.get("window", "?") != "?" else -1
+                ttl_val = int(info.get("ttl", -1)) if info.get("ttl", "?") != "?" else -1
+                window_val = int(info.get("window", -1)) if info.get("window", "?") != "?" else -1
                 combined_os = Fingerprinter.comprehensive_os_guess(
-                    ttl=ttl, window=window,
+                    ttl=ttl_val, window=window_val,
                     open_ports=host_port_sets.get(host, set()),
                     banners=banners,
                 )

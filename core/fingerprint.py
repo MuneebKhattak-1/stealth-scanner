@@ -376,11 +376,11 @@ class Fingerprinter:
     @staticmethod
     def active_os_probe_port(target: str, port: int = 80, timeout: float = 2.0) -> Dict[str, str]:
         """
-        Fingerprint OS by probing a SPECIFIC port (use a known-open port
-        for best results, e.g. 135 for Windows, 22 for Linux).
-        Requires scapy + root.
+        Fingerprint OS by probing a SPECIFIC port.
+        Tries scapy first (root), falls back to non-root methods.
         """
         result = {"os": "Unknown", "ttl": "?", "window": "?"}
+        # Try scapy-based probe first (most accurate, requires root)
         try:
             from scapy.all import IP, TCP, sr1, conf, send
             conf.verb = 0
@@ -390,13 +390,287 @@ class Fingerprinter:
             if resp:
                 result = Fingerprinter.fingerprint_from_packet(resp)
                 send(IP(dst=target) / TCP(dport=port, flags="R"), verbose=0)
-        except ImportError:
-            result["os"] = "scapy not available"
-        except PermissionError:
-            result["os"] = "root required"
+                if result.get("os", "Unknown") != "Unknown":
+                    return result
+        except (ImportError, PermissionError, OSError):
+            pass
         except Exception:
             pass
+
+        # Fall back to non-root methods
+        return Fingerprinter.noroot_os_probe(target, port, timeout)
+
+    @staticmethod
+    def noroot_os_probe(target: str, port: int = 80, timeout: float = 2.0) -> Dict[str, str]:
+        """
+        OS fingerprinting WITHOUT root privileges.
+        Combines ping TTL + SMB negotiation + TCP window probing.
+        """
+        result = {"os": "Unknown", "ttl": "?", "window": "?", "method": "no-root"}
+
+        # 1. Get TTL via ping (works without root on most systems)
+        ttl = Fingerprinter.ping_ttl_probe(target, timeout)
+        if ttl > 0:
+            result["ttl"] = str(ttl)
+            result["os"] = Fingerprinter.ttl_os_guess(ttl)
+
+        # 2. Get TCP window size from a connect + getsockopt
+        window = Fingerprinter._tcp_window_probe(target, port, timeout)
+        if window > 0:
+            result["window"] = str(window)
+
+        # 3. If TTL + Window both available, get detailed version
+        if ttl > 0 and window > 0:
+            detailed = Fingerprinter.detailed_os_guess(ttl, window)
+            if detailed:
+                result["os"] = detailed
+
+        # 4. Try SMB negotiation for Windows version (port 445)
+        smb_os = Fingerprinter.smb_os_discovery(target, timeout)
+        if smb_os:
+            result["os"] = smb_os
+            result["method"] = "SMB"
+
         return result
+
+    @staticmethod
+    def ping_ttl_probe(target: str, timeout: float = 2.0) -> int:
+        """
+        Get TTL value from the target using ICMP ping.
+        Works without root on most Linux/macOS systems.
+        Returns TTL value or -1 on failure.
+        """
+        import subprocess
+        import platform
+
+        try:
+            os_name = platform.system().lower()
+            if os_name == "windows":
+                cmd = ["ping", "-n", "1", "-w", str(int(timeout * 1000)), target]
+            else:
+                cmd = ["ping", "-c", "1", "-W", str(int(timeout)), target]
+
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 2)
+            output = proc.stdout
+
+            # Parse TTL from ping output
+            # Linux:   "ttl=64"
+            # Windows: "TTL=128"
+            # macOS:   "ttl=64"
+            ttl_match = re.search(r'ttl[=:](\d+)', output, re.IGNORECASE)
+            if ttl_match:
+                return int(ttl_match.group(1))
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+            pass
+
+        return -1
+
+    @staticmethod
+    def _tcp_window_probe(target: str, port: int, timeout: float = 2.0) -> int:
+        """
+        Get TCP window size by connecting to a port and reading SO_RCVBUF.
+        This gives an approximation of the remote window size.
+        Returns window size or -1 on failure.
+        """
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(timeout)
+                s.connect((target, port))
+                # SO_RCVBUF reflects the negotiated window
+                window = s.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+                return window
+        except Exception:
+            pass
+        return -1
+
+    @staticmethod
+    def smb_os_discovery(target: str, timeout: float = 3.0) -> str:
+        """
+        Connect to port 445 and perform SMB2 Negotiate to extract
+        the exact Windows version from the response.
+        Works WITHOUT root privileges — just a regular TCP connection.
+        Returns OS version string or empty string on failure.
+        """
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            s.connect((target, 445))
+
+            # ─── SMB2 Negotiate Request ───────────────────────────────
+            # NetBIOS Session header + SMB2 Negotiate packet
+            smb2_negotiate = (
+                # NetBIOS Session Service
+                b'\x00'          # Message type: Session Message
+                b'\x00\x00\x86' # Length (134 bytes)
+                # SMB2 Header
+                b'\xfe\x53\x4d\x42'   # Protocol ID: 0xFE 'SMB'
+                b'\x40\x00'           # Header length: 64
+                b'\x00\x00'           # Credit charge: 0
+                b'\x00\x00'           # Channel sequence
+                b'\x00\x00'           # Reserved
+                b'\x00\x00'           # Command: NEGOTIATE (0x0000)
+                b'\x00\x00'           # Credits requested: 0
+                b'\x00\x00\x00\x00'   # Flags
+                b'\x00\x00\x00\x00'   # Next command: 0
+                b'\x01\x00\x00\x00\x00\x00\x00\x00'  # Message ID: 1
+                b'\x00\x00\x00\x00'   # Process ID
+                b'\x00\x00\x00\x00'   # Tree ID
+                b'\x00\x00\x00\x00\x00\x00\x00\x00'  # Session ID
+                b'\x00\x00\x00\x00\x00\x00\x00\x00'  # Signature (8 bytes)
+                b'\x00\x00\x00\x00\x00\x00\x00\x00'  # Signature (8 bytes)
+                # SMB2 Negotiate Request body
+                b'\x24\x00'           # Structure size: 36
+                b'\x02\x00'           # Dialect count: 2
+                b'\x01\x00'           # Security mode
+                b'\x00\x00'           # Reserved
+                b'\x00\x00\x00\x00'   # Capabilities
+                b'\x00\x00\x00\x00\x00\x00\x00\x00'   # Client GUID
+                b'\x00\x00\x00\x00\x00\x00\x00\x00'   # Client GUID
+                b'\x00\x00\x00\x00'   # Negotiate context offset
+                b'\x00\x00'           # Negotiate context count
+                b'\x00\x00'           # Reserved2
+                b'\x02\x02'           # Dialect: SMB 2.0.2
+                b'\x10\x02'           # Dialect: SMB 2.1
+            )
+
+            s.send(smb2_negotiate)
+            response = s.recv(1024)
+            s.close()
+
+            if len(response) < 70:
+                return ""
+
+            # Check for SMB2 response signature
+            # NetBIOS header is 4 bytes, then SMB2 header starts
+            smb_offset = 4
+            if response[smb_offset:smb_offset+4] != b'\xfe\x53\x4d\x42':
+                # Maybe SMB1 response — try to parse NTLM info
+                return Fingerprinter._parse_smb1_os(response)
+
+            # SMB2 Negotiate Response — the header is 64 bytes
+            # After header (offset 68), the negotiate response body starts
+            body_offset = smb_offset + 64  # 68
+
+            if len(response) < body_offset + 65:
+                return ""
+
+            # Negotiate response structure:
+            # +0: StructureSize (2)  +2: SecurityMode (2)  +4: DialectRevision (2)
+            # +6: NegotiateContextCount (2)  +8: ServerGuid (16)
+            # +24: Capabilities (4)  +28: MaxTransactSize (4)
+            # +32: MaxReadSize (4)  +36: MaxWriteSize (4)
+            # +40: SystemTime (8)   +48: ServerStartTime (8)
+            # +56: SecurityBufferOffset (2)  +58: SecurityBufferLength (2)
+
+            dialect = int.from_bytes(response[body_offset+4:body_offset+6], 'little')
+
+            # Try to extract NTLM info from the security buffer
+            sec_offset_raw = int.from_bytes(response[body_offset+56:body_offset+58], 'little')
+            sec_length = int.from_bytes(response[body_offset+58:body_offset+60], 'little')
+
+            if sec_length > 0 and sec_offset_raw > 0:
+                sec_offset = smb_offset + sec_offset_raw
+                if len(response) >= sec_offset + sec_length:
+                    sec_blob = response[sec_offset:sec_offset + sec_length]
+                    ntlm_os = Fingerprinter._parse_ntlm_os_version(sec_blob)
+                    if ntlm_os:
+                        return ntlm_os
+
+            # Fallback: dialect-based version guess
+            dialect_map = {
+                0x0311: "Windows 10+ / Server 2016+ (SMB 3.1.1)",
+                0x0300: "Windows 8.1+ / Server 2012 R2+ (SMB 3.0)",
+                0x0210: "Windows 7+ / Server 2008 R2+ (SMB 2.1)",
+                0x0202: "Windows Vista+ / Server 2008+ (SMB 2.0.2)",
+            }
+            return dialect_map.get(dialect, "")
+
+        except (socket.timeout, ConnectionRefusedError, OSError):
+            pass
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _parse_ntlm_os_version(sec_blob: bytes) -> str:
+        """Parse NTLM security blob for OS version info."""
+        try:
+            # Look for NTLMSSP signature in the blob
+            ntlm_pos = sec_blob.find(b'NTLMSSP\x00')
+            if ntlm_pos < 0:
+                return ""
+
+            ntlm_data = sec_blob[ntlm_pos:]
+
+            # NTLMSSP Challenge message (type 2)
+            # Version info is at offset 48 (8 bytes): Major, Minor, Build, Reserved, NTLMRevision
+            if len(ntlm_data) < 56:
+                return ""
+
+            msg_type = int.from_bytes(ntlm_data[8:12], 'little')
+            if msg_type != 2:  # Not a Challenge message
+                return ""
+
+            # Check if version info is present (flag bit 25)
+            flags = int.from_bytes(ntlm_data[20:24], 'little')
+            if not (flags & 0x02000000):  # NTLMSSP_NEGOTIATE_VERSION
+                return ""
+
+            # Version is at offset 48
+            major = ntlm_data[48]
+            minor = ntlm_data[49]
+            build = int.from_bytes(ntlm_data[50:52], 'little')
+
+            # Map Windows version numbers to names
+            version_map = {
+                (10, 0): "Windows 10 / 11 / Server 2016-2022",
+                (6, 3):  "Windows 8.1 / Server 2012 R2",
+                (6, 2):  "Windows 8 / Server 2012",
+                (6, 1):  "Windows 7 / Server 2008 R2",
+                (6, 0):  "Windows Vista / Server 2008",
+                (5, 2):  "Windows XP x64 / Server 2003",
+                (5, 1):  "Windows XP",
+                (5, 0):  "Windows 2000",
+            }
+
+            os_name = version_map.get((major, minor), f"Windows NT {major}.{minor}")
+
+            # Use build number to differentiate Win 10 vs 11
+            if major == 10 and minor == 0:
+                if build >= 22000:
+                    os_name = f"Windows 11 (Build {build})"
+                elif build >= 20348:
+                    os_name = f"Windows Server 2022 (Build {build})"
+                elif build >= 17763:
+                    os_name = f"Windows 10 / Server 2019 (Build {build})"
+                elif build >= 14393:
+                    os_name = f"Windows 10 / Server 2016 (Build {build})"
+                else:
+                    os_name = f"Windows 10 (Build {build})"
+            else:
+                os_name = f"{os_name} (Build {build})"
+
+            return os_name
+
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _parse_smb1_os(response: bytes) -> str:
+        """Try to extract OS string from SMB1 negotiate response."""
+        try:
+            # Look for readable OS strings in the response
+            text = response.decode('utf-16-le', errors='ignore')
+            # Common patterns in SMB1 responses
+            for pattern in [r'Windows\s+[\d.]+[\w\s]*', r'Windows\s+Server\s+\d+[\w\s]*',
+                           r'Windows\s+\d+[\w\s]*']:
+                m = re.search(pattern, text)
+                if m:
+                    return m.group(0).strip()[:50]
+        except Exception:
+            pass
+        return ""
 
     @staticmethod
     def print_os_result(result: Dict[str, str], target: str):
@@ -404,3 +678,4 @@ class Fingerprinter:
         print(f"  ├─ OS Guess : {Fore.GREEN}{result.get('os', 'Unknown')}{Style.RESET_ALL}")
         print(f"  ├─ TTL     : {result.get('ttl', '?')}")
         print(f"  └─ Window  : {result.get('window', '?')}")
+
