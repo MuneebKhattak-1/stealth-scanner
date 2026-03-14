@@ -31,8 +31,9 @@ SYN stealth scanning · OS fingerprinting · Decoy injection · Packet fragmenta
 | **TCP Connect Scan** | No root required |
 | **SYN Stealth Scan** | Half-open scan via scapy (root required) |
 | **UDP Scan** | Probes UDP ports |
-| **Auto OS Detection** | Port-based: 135/139/445 = Windows, 22+111 = Linux |
-| **Deep OS Fingerprint** | TTL + TCP window analysis via `--os-detect` |
+| **🔍 SMB OS Discovery** | Extracts exact Windows build via SMB2/NTLM (no root needed) |
+| **Auto OS Detection** | Port-based + ping TTL + banner analysis |
+| **Deep OS Fingerprint** | TTL + TCP window + SMB + banner combined analysis |
 | **Decoy IPs** | Spoofed source packets to confuse IDS logs |
 | **Packet Fragmentation** | 8-byte fragments bypass shallow IDS rules |
 | **TTL Spoofing** | Mimics Windows/Linux/BSD TTL values |
@@ -121,15 +122,19 @@ sudo python3 stealth_scanner.py -t 192.168.1.0/24 -p top100 -o results.json 2>/d
 ## 🖥️ Example Output (CLI)
 
 ```
-HOST               OS FINGERPRINT
-──────────────────────────────────────────
-192.168.1.17       Windows
+[*] Running OS detection...
+  192.168.1.17 → Windows 10 / Server 2019 (Build 19045) (via SMB)
 
 HOST              PORT    STATE       SERVICE          BANNER
 ────────────────────────────────────────────────────────────────────────────────
 192.168.1.17      135     open        [msrpc]
 192.168.1.17      139     open        [netbios-ssn]
 192.168.1.17      445     open        [smb]
+192.168.1.17      3389    open        [rdp]
+
+HOST               OS FINGERPRINT
+──────────────────────────────────────────
+192.168.1.17       Windows 10 / Server 2019 (Build 19045)
 
 [*] Scan complete in 4.32s
 ```
@@ -138,12 +143,17 @@ HOST              PORT    STATE       SERVICE          BANNER
 
 ## 🧠 OS Detection Logic
 
-| Priority | Method | Example |
-|---|---|---|
-| 1st | **Port-based** (most reliable) | 135+139+445 = Windows |
-| 2nd | **TTL fingerprint** | 128=Windows, 64=Linux, 255=BSD |
-| 3rd | **TCP Window size** | 8192=Windows, 29200=Linux |
-| 4th | **Banner text** | `OpenSSH_8.9 Ubuntu` = Linux |
+StealthScan uses **multiple detection methods** and picks the most specific result:
+
+| Priority | Method | No Root? | Example Output |
+|---|---|---|---|
+| 1st | **SMB2/NTLM negotiation** | ✅ | `Windows 11 (Build 22621)` |
+| 2nd | **Banner analysis** | ✅ | `Ubuntu 22.04 LTS`, `Debian 12` |
+| 3rd | **TTL + TCP Window** | ⚠️ | `Windows 10 (v1703+)`, `Linux 5.x` |
+| 4th | **Port-based** | ✅ | `Windows` (135/445), `Linux` (22+111) |
+| 5th | **TTL only (ping)** | ✅ | `Windows` (128), `Linux` (64) |
+
+> 💡 **No root required!** SMB detection auto-runs when port 445 is open, and ping TTL works without privileges on most systems. Use `--os-detect` for additional scapy-based deep probing (requires root).
 
 ---
 
