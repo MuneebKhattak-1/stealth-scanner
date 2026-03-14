@@ -475,10 +475,11 @@ class Fingerprinter:
 
             # ─── SMB2 Negotiate Request ───────────────────────────────
             # NetBIOS Session header + SMB2 Negotiate packet
+            # Length = Header(64) + Body(36) + Dialects(8) = 108 bytes
             smb2_negotiate = (
                 # NetBIOS Session Service
                 b'\x00'          # Message type: Session Message
-                b'\x00\x00\x86' # Length (134 bytes)
+                b'\x00\x00\x6c' # Length (108 bytes)
                 # SMB2 Header
                 b'\xfe\x53\x4d\x42'   # Protocol ID: 0xFE 'SMB'
                 b'\x40\x00'           # Header length: 64
@@ -497,17 +498,19 @@ class Fingerprinter:
                 b'\x00\x00\x00\x00\x00\x00\x00\x00'  # Signature (8 bytes)
                 # SMB2 Negotiate Request body
                 b'\x24\x00'           # Structure size: 36
-                b'\x02\x00'           # Dialect count: 2
+                b'\x04\x00'           # Dialect count: 4
                 b'\x01\x00'           # Security mode
                 b'\x00\x00'           # Reserved
-                b'\x00\x00\x00\x00'   # Capabilities
-                b'\x00\x00\x00\x00\x00\x00\x00\x00'   # Client GUID
-                b'\x00\x00\x00\x00\x00\x00\x00\x00'   # Client GUID
+                b'\x7f\x00\x00\x00'   # Capabilities (Supports DFS, Leasing, Large MTU, MultiChannel, PersistentHandles, DirectoryLeasing, Encryption)
+                b'\x00\x00\x00\x00\x00\x00\x00\x00'   # Client GUID (8 bytes)
+                b'\x00\x00\x00\x00\x00\x00\x00\x00'   # Client GUID (8 bytes)
                 b'\x00\x00\x00\x00'   # Negotiate context offset
                 b'\x00\x00'           # Negotiate context count
                 b'\x00\x00'           # Reserved2
                 b'\x02\x02'           # Dialect: SMB 2.0.2
                 b'\x10\x02'           # Dialect: SMB 2.1
+                b'\x00\x03'           # Dialect: SMB 3.0
+                b'\x11\x03'           # Dialect: SMB 3.1.1
             )
 
             s.send(smb2_negotiate)

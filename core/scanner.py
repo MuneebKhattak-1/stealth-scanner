@@ -278,6 +278,20 @@ class CoreScanner:
     # ------------------------------------------------------------------ #
 
     @staticmethod
+    def get_local_subnet() -> str:
+        """Attempt to detect the local machine's IP and return its /24 subnet."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            # Calculate the /24 subnet (assuming standard /24 for local networks as a generic fallback)
+            network = ipaddress.IPv4Interface(f"{local_ip}/24").network
+            return str(network)
+        except Exception:
+            return ""
+
+    @staticmethod
     def arp_discovery(network: str, timeout: float = 2.0) -> List[Tuple[str, str]]:
         """
         Perform an ARP ping sweep on the given network.

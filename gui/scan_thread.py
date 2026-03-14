@@ -103,15 +103,48 @@ class ScanThread(threading.Thread):
         self.log("")
 
         # Resolve targets
-        self.log(f"[*] Resolving target: {self.target}", "info")
-        targets = resolve_targets(self.target)
-        if not targets:
-            self.log(f"[!] Cannot resolve host: {self.target}", "error")
-            self.msg_queue.put((MSG_COMPLETE, {"duration": "0s", "total": 0, "open": 0}))
-            return
+        if profile.get("auto_discovery", False):
+            from core.scanner import CoreScanner
+            subnet = CoreScanner.get_local_subnet()
+            if not subnet:
+                self.log(f"[!] Could not detect local subnet automatically.", "error")
+                self.msg_queue.put((MSG_COMPLETE, {"duration": "0s", "total": 0, "open": 0}))
+                return
+            
+            mode_name = "Discover-Only (Network Sweep)" if profile.get("discover_only") else "Auto-Discovery"
+            self.log(f"[*] {mode_name} Mode Enabled", "info")
+            self.log(f"[*] Local Subnet Detected: {subnet}", "info")
+            
+            clients = CoreScanner.arp_discovery(subnet, timeout=2.0)
+            if not clients:
+                self.log(f"[!] No devices found via ARP. Exiting.", "error")
+                self.msg_queue.put((MSG_COMPLETE, {"duration": "0s", "total": 0, "open": 0}))
+                return
+            
+            self.log("[+] Automatic Discovery Results:", "info")
+            for ip, mac in clients:
+                self.log(f"  IP: {ip:<15} MAC: {mac}", "default")
+                
+            if profile.get("discover_only"):
+                self.log(f"", "default")
+                self.log(f"[*] Discovery complete. Found {len(clients)} devices.", "info")
+                self.msg_queue.put((MSG_COMPLETE, {"duration": f"{time.time() - start_time:.2f}s", "total": len(clients), "open": 0}))
+                return
 
-        if targets[0] != self.target:
-            self.log(f"[*] Resolved {self.target} → {targets[0]}", "info")
+            targets = [ip for ip, mac in clients]
+            self.log(f"", "default")
+            self.log(f"[*] Proceeding to port scan on {len(targets)} discovered devices...", "info")
+            
+        else:
+            self.log(f"[*] Resolving target: {self.target}", "info")
+            targets = resolve_targets(self.target)
+            if not targets:
+                self.log(f"[!] Cannot resolve host: {self.target}", "error")
+                self.msg_queue.put((MSG_COMPLETE, {"duration": "0s", "total": 0, "open": 0}))
+                return
+    
+            if targets[0] != self.target:
+                self.log(f"[*] Resolved {self.target} → {targets[0]}", "info")
 
         # Parse ports
         try:

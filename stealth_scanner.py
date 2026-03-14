@@ -127,20 +127,7 @@ def build_parser():
     return p
 
 
-def get_local_subnet() -> str:
-    """Attempt to detect the local machine's IP and return its /24 subnet."""
-    try:
-        # Create a dummy socket to determine the local routing IP
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-        
-        # Calculate the /24 subnet (assuming standard /24 for local networks as a generic fallback)
-        network = ipaddress.IPv4Interface(f"{local_ip}/24").network
-        return str(network)
-    except Exception:
-        return ""
+
 
 def main():
     print(BANNER)
@@ -156,7 +143,7 @@ def main():
     targets = []
     
     if args.auto or args.discover:
-        subnet = get_local_subnet()
+        subnet = CoreScanner.get_local_subnet()
         if not subnet:
             print(f"{Fore.RED}[!] Could not detect local subnet automatically. Please use -t.{Style.RESET_ALL}")
             return 1
