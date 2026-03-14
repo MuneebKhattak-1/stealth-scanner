@@ -322,10 +322,10 @@ class Fingerprinter:
     def fingerprint_from_packet(pkt) -> Dict[str, str]:
         """
         Attempt OS fingerprinting from a scapy response packet.
-        Returns dict with 'os', 'ttl', 'window', 'flags'.
+        Returns dict with 'os', 'ttl', 'window', 'flags', 'method'.
         Uses TTL+Window combined lookup for detailed version info.
         """
-        result = {"os": "Unknown", "ttl": "?", "window": "?", "flags": "?"}
+        result = {"os": "Unknown", "ttl": "?", "window": "?", "flags": "?", "method": "packet"}
         try:
             from scapy.all import IP, TCP
             ttl = -1
@@ -414,18 +414,11 @@ class Fingerprinter:
             result["ttl"] = str(ttl)
             result["os"] = Fingerprinter.ttl_os_guess(ttl)
 
-        # 2. Get TCP window size from a connect + getsockopt
-        window = Fingerprinter._tcp_window_probe(target, port, timeout)
-        if window > 0:
-            result["window"] = str(window)
+        # 2. If TTL is available, get detailed version (Window will be missing without root)
+        if ttl > 0:
+            result["os"] = Fingerprinter.ttl_os_guess(ttl)
 
-        # 3. If TTL + Window both available, get detailed version
-        if ttl > 0 and window > 0:
-            detailed = Fingerprinter.detailed_os_guess(ttl, window)
-            if detailed:
-                result["os"] = detailed
-
-        # 4. Try SMB negotiation for Windows version (port 445)
+        # 3. Try SMB negotiation for Windows version (port 445)
         smb_os = Fingerprinter.smb_os_discovery(target, timeout)
         if smb_os:
             result["os"] = smb_os
@@ -465,23 +458,7 @@ class Fingerprinter:
 
         return -1
 
-    @staticmethod
-    def _tcp_window_probe(target: str, port: int, timeout: float = 2.0) -> int:
-        """
-        Get TCP window size by connecting to a port and reading SO_RCVBUF.
-        This gives an approximation of the remote window size.
-        Returns window size or -1 on failure.
-        """
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(timeout)
-                s.connect((target, port))
-                # SO_RCVBUF reflects the negotiated window
-                window = s.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
-                return window
-        except Exception:
-            pass
-        return -1
+
 
     @staticmethod
     def smb_os_discovery(target: str, timeout: float = 3.0) -> str:

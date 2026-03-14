@@ -245,25 +245,29 @@ class ScanThread(threading.Thread):
             self.log("[*] Running deep OS fingerprinting...", "info")
             for host in list(host_port_sets.keys())[:10]:
                 probe_ports = sorted(host_port_sets[host])[:3]
-                info = os_info.get(host, {"os": "Unknown", "ttl": "?", "window": "?"})
+                info = os_info.get(host, {"os": "Unknown", "ttl": "?", "window": "?", "method": "port+banner"})
+                
+                deep_result = None
                 for port in probe_ports:
                     result = Fingerprinter.active_os_probe_port(host, port, timeout=profile.get("timeout", 1.0))
                     if result.get("ttl") != "?":
-                        # Merge new data
-                        info["ttl"] = result.get("ttl", info.get("ttl", "?"))
-                        info["window"] = result.get("window", info.get("window", "?"))
+                        deep_result = result
                         break
-                # Final combined guess with all available data
-                banners = host_banners.get(host, [])
-                ttl_val = int(info.get("ttl", -1)) if info.get("ttl", "?") != "?" else -1
-                window_val = int(info.get("window", -1)) if info.get("window", "?") != "?" else -1
-                combined_os = Fingerprinter.comprehensive_os_guess(
-                    ttl=ttl_val, window=window_val,
-                    open_ports=host_port_sets.get(host, set()),
-                    banners=banners,
-                )
-                if combined_os and combined_os != "Unknown":
-                    info["os"] = combined_os
+
+                if deep_result:
+                    # Update TTL and Window from scapy (if available)
+                    if deep_result.get("ttl", "?") != "?":
+                        info["ttl"] = deep_result["ttl"]
+                    if deep_result.get("window", "?") != "?":
+                        info["window"] = deep_result["window"]
+                    
+                    # Update OS if we got a packet-based fingerprint
+                    # AND we don't already have a highly accurate SMB fingerprint
+                    new_os = deep_result.get("os", "Unknown")
+                    if deep_result.get("method") == "packet" and info.get("method") != "SMB" and new_os not in ("Unknown", "scapy not available", "root required"):
+                        info["os"] = new_os
+                        info["method"] = "packet"
+                
                 os_info[host] = info
                 self.log(f"  {host} → OS: {info.get('os', '?')} | TTL: {info.get('ttl', '?')} | "
                          f"Window: {info.get('window', '?')}", "os")
